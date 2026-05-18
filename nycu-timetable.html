@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>陽明交大 NYCU 自動化課表整理工具 - 雲端連線版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght=400;500;700&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        @media print {
+            .no-print { display: none !important; }
+            .print-shadow { box-shadow: none !important; }
+            body { background: white; }
+        }
+        .modal-animate { animation: fadeIn 0.2s ease-out; }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen">
+
+    <div class="max-w-7xl mx-auto px-4 py-6">
+        <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between pb-6 mb-6 border-b border-slate-200 gap-4">
+            <div>
+                <h1 class="text-2xl md:text-3xl font-bold text-slate-900 flex items-center gap-2">
+                    <i data-lucide="cloud-lightning" class="text-blue-600 w-8 h-8"></i>
+                    陽明交大 NYCU 課表工具 <span class="text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full align-middle font-normal">雲端連線版</span>
+                </h1>
+                <p class="text-slate-500 mt-1 text-sm">輸入學號即可載入或同步專屬課表，支援多人多機遠端連線</p>
+            </div>
+            
+            <div class="flex flex-wrap items-center gap-2 no-print bg-white p-3 rounded-xl border border-slate-200 shadow-sm">
+                <div class="flex items-center gap-1.5">
+                    <i data-lucide="user-square-2" class="text-slate-400 w-4 h-4"></i>
+                    <label class="text-xs font-bold text-slate-500">學號/代碼：</label>
+                </div>
+                <input type="text" id="studentIdInput" class="border border-slate-300 rounded-lg px-2.5 py-1.5 text-sm font-mono focus:ring-2 focus:ring-blue-500 w-36" placeholder="例如: 311554001">
+                <button onclick="loginStudent()" class="bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium px-3 py-2 rounded-lg transition flex items-center gap-1">
+                    <i data-lucide="log-in" class="w-3.5 h-3.5"></i> 進入課表
+                </button>
+                <div id="syncStatus" class="text-xs px-2 py-1 rounded bg-slate-100 text-slate-500 flex items-center gap-1 font-medium">
+                    <span class="w-2 h-2 rounded-full bg-slate-400"></span> 未登入
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div class="lg:col-span-1 space-y-6 no-print">
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <h2 class="text-lg font-bold text-slate-900 mb-3 flex items-center gap-2">
+                        <i data-lucide="clipboard-text" class="text-blue-500 w-5 h-5"></i>
+                        1. 貼上系統複製的課程
+                    </h2>
+                    <textarea id="rawInput" rows="5" class="w-full p-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 text-sm font-mono" placeholder="貼上包含時間代碼的文字..."></textarea>
+                    <button onclick="processInput()" class="w-full mt-3 bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 px-4 rounded-xl shadow-sm transition flex items-center justify-center gap-2">
+                        <i data-lucide="plus-circle" class="w-5 h-5"></i> 解析並排入課表
+                    </button>
+                </div>
+
+                <div class="bg-white p-5 rounded-2xl shadow-sm border border-slate-200">
+                    <div class="flex justify-between items-center mb-3">
+                        <h2 class="text-lg font-bold text-slate-900 flex items-center gap-2">
+                            <i data-lucide="list" class="text-blue-500 w-5 h-5"></i>
+                            2. 課程清單 (<span id="courseCount">0</span>)
+                        </h2>
+                        <button onclick="clearAll()" class="text-xs text-rose-500 hover:underline flex items-center gap-0.5">
+                            <i data-lucide="trash-2" class="w-3 h-3"></i> 清空
+                        </button>
+                    </div>
+                    <div id="courseList" class="space-y-2 max-h-[220px] overflow-y-auto pr-1 text-sm">
+                        <p class="text-slate-400 text-center py-4">目前尚未加入任何課程</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-slate-100 flex gap-2">
+                        <button onclick="window.print()" class="w-full py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-medium flex items-center justify-center gap-1">
+                            <i data-lucide="printer" class="w-3.5 h-3.5"></i> 列印課表
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2">
+                <div class="bg-white p-4 md:p-6 rounded-2xl shadow-sm border border-slate-200 print-shadow overflow-x-auto">
+                    <table class="w-full min-w-[750px] border-collapse table-fixed">
+                        <thead>
+                            <tr class="bg-slate-100">
+                                <th class="w-24 p-2 text-center text-xs font-semibold text-slate-500 rounded-tl-xl border border-slate-200">時間 / 節次</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週一 (M)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週二 (T)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週三 (W)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週四 (R)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週五 (F)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 border border-slate-200">週六 (S)</th>
+                                <th class="p-2 text-center text-sm font-bold text-slate-700 rounded-tr-xl border border-slate-200">週日 (U)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="timetableBody" class="divide-y divide-slate-200">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="alertContainer" class="mt-8 space-y-2 no-print"></div>
+    </div>
+
+    <div id="courseModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center hidden no-print" onclick="closeModal()">
+        <div class="bg-white rounded-2xl max-w-md w-full mx-4 p-6 shadow-xl border border-slate-100 transform transition-all modal-animate" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-start mb-4">
+                <div class="space-y-1">
+                    <span id="modalCampusBadge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-blue-100 text-blue-800">校區</span>
+                    <h3 id="modalCourseName" class="text-xl font-bold text-slate-900 leading-snug pt-1">課程名稱</h3>
+                </div>
+                <button onclick="closeModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg transition hover:bg-slate-50">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div class="space-y-3 text-sm text-slate-600 border-t border-b border-slate-100 py-4 my-4">
+                <div class="flex items-center gap-3">
+                    <i data-lucide="user" class="w-4 h-4 text-slate-400"></i>
+                    <span>授課教師：<span id="modalTeacher" class="font-semibold text-slate-800"></span></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <i data-lucide="clock" class="w-4 h-4 text-slate-400"></i>
+                    <span>時間節次：<span id="modalTime" class="font-semibold text-blue-600 font-mono"></span></span>
+                </div>
+                <div class="flex items-start gap-3">
+                    <i data-lucide="map-pin" class="w-4 h-4 text-slate-400 mt-0.5"></i>
+                    <span>上課地點：<span id="modalLocation" class="font-semibold text-slate-800"></span></span>
+                </div>
+
+                <div class="pt-2 border-t border-dashed border-slate-100">
+                    <div class="text-xs font-semibold text-slate-400 mb-2 flex items-center gap-1">
+                        <i data-lucide="palette" class="w-3.5 h-3.5"></i> 自訂課表顏色：
+                    </div>
+                    <div id="modalColorPicker" class="flex gap-2 pt-0.5"></div>
+                </div>
+            </div>
+
+            <div class="flex gap-2.5">
+                <button id="modalDeleteBtn" class="flex-1 bg-rose-50 hover:bg-rose-100 text-rose-600 font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center gap-2">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i> 刪除此課程
+                </button>
+                <button onclick="closeModal()" class="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium py-2.5 px-4 rounded-xl transition">
+                    關閉
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        // 🛠️ 雲端連線設定區 (部署時在這邊填入您的 Firebase 憑證)
+        // ==========================================
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "firebase/app";
+        import { getAnalytics } from "firebase/analytics";
+        // TODO: Add SDKs for Firebase products that you want to use
+        // https://firebase.google.com/docs/web/setup#available-libraries
+
+        // Your web app's Firebase configuration
+        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+        const firebaseConfig = {
+        apiKey: "AIzaSyAUIAWWyoG1eOXbBYAXEVxRc7ihbL11uI8",
+        authDomain: "nycu-timetable.firebaseapp.com",
+        projectId: "nycu-timetable",
+        storageBucket: "nycu-timetable.firebasestorage.app",
+        messagingSenderId: "683179006718",
+        appId: "1:683179006718:web:a58764d134ebdea21ca3af",
+        measurementId: "G-C55KZ11H9Y"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+
+        let isCloudMode = false;
+        let db = null;
+
+        // 初始化 Firebase (若填寫了設定檔則自動切換為真雲端連線)
+        if (firebaseConfig.databaseURL) {
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.database();
+                isCloudMode = true;
+                console.log("Firebase 雲端同步模式已啟動！");
+            } catch (e) {
+                console.error("Firebase 初始化失敗，自動切換回本地學號分割模式", e);
+            }
+        }
+
+        // ==========================================
+        // 基礎對照資料
+        // ==========================================
+        const TIME_CODES = {
+            'y': { label: 'y', time: '06:00~06:50' }, 'z': { label: 'z', time: '07:00~07:50' },
+            '1': { label: '1', time: '08:00~08:50' }, '2': { label: '2', time: '09:00~09:50' },
+            '3': { label: '3', time: '10:10~11:00' }, '4': { label: '4', time: '11:10~12:00' },
+            'n': { label: 'n', time: '12:20~13:10' }, '5': { label: '5', time: '13:20~14:10' },
+            '6': { label: '6', time: '14:20~15:10' }, '7': { label: '7', time: '15:30~16:20' },
+            '8': { label: '8', time: '16:30~17:20' }, '9': { label: '9', time: '17:30~18:20' },
+            'a': { label: 'a', time: '18:30~19:20' }, 'b': { label: 'b', time: '19:30~20:20' },
+            'c': { label: 'c', time: '20:30~21:20' }, 'd': { label: 'd', time: '21:30~22:20' }
+        };
+
+        const DAYS = ['M', 'T', 'W', 'R', 'F', 'S', 'U'];
+        const DAY_NAMES = { 'M': '週一', 'T': '週二', 'W': '週三', 'R': '週四', 'F': '週五', 'S': '週六', 'U': '週日' };
+
+        const CLASSROOM_DATABASE = {
+            'YN': { campus: '台北陽明', building: '護理館' }, 'YE': { campus: '台北陽明', building: '實驗大樓' },
+            'YR': { campus: '台北陽明', building: '守仁樓' }, 'YS': { campus: '台北陽明', building: '醫學二館' },
+            'YB': { campus: '台北陽明', building: '生醫工程館' }, 'YX': { campus: '台北陽明', building: '知行樓' },
+            'YD': { campus: '台北陽明', building: '牙醫館' }, 'YK': { campus: '台北陽明', building: '傳統醫學大樓(甲棟)' },
+            'YT': { campus: '台北陽明', building: '教學大樓' }, 'YM': { campus: '台北陽明', building: '醫學館' },
+            'YL': { campus: '台北陽明', building: '圖書資源暨研究大樓' }, 'YA': { campus: '台北陽明', building: '活動中心' },
+            'YH': { campus: '台北陽明', building: '致和樓' }, 'YC': { campus: '台北陽明', building: '生物醫學大樓' },
+            'AS': { campus: '台北陽明', building: '中央研究院' }, 'PH': { campus: '台北陽明', building: '臺北榮民總醫院' },
+            'CH': { campus: '台中', building: '台中榮民總醫院' }, 'KH': { campus: '高雄', building: '高雄榮民總醫院' },
+            'C': { campus: '新竹博愛', building: '竹銘館' }, 'E': { campus: '新竹博愛', building: '教學大樓' },
+            'LI': { campus: '新竹博愛', building: '實驗一館' }, 'BA': { campus: '新竹博愛', building: '生科實驗館' },
+            'BB': { campus: '新竹博愛', building: '生科實驗二館' }, 'BI': { campus: '新竹博愛', building: '賢齊館' },
+            'EA': { campus: '新竹光復', building: '工程一館' }, 'EB': { campus: '新竹光復', building: '工程二館' },
+            'EC': { campus: '新竹光復', building: '工程三館' }, 'ED': { campus: '新竹光復', building: '工程四館' },
+            'EE': { campus: '新竹光復', building: '工程五館' }, 'EF': { campus: '新竹光復', building: '工程六館' },
+            'M': { campus: '新竹光復', building: '管理館' }, 'MB': { campus: '新竹光復', building: '管理二館' },
+            'SA': { campus: '新竹光復', building: '科學一館' }, 'SB': { campus: '新竹光復', building: '科學二館' },
+            'SC': { campus: '新竹光復', building: '科學三館' }, 'AC': { campus: '新竹光復', building: '學生活動中心' },
+            'A': { campus: '新竹光復', building: '綜合一館' }, 'AB': { campus: '新竹光復', building: '綜合一館地下室' },
+            'HA': { campus: '新竹光復', building: '人社一館' }, 'F': { campus: '新竹光復', building: '人社二館' },
+            'HB': { campus: '新竹光復', building: '人社二館' }, 'HC': { campus: '新竹光復', building: '人社三館' },
+            'CY': { campus: '新竹光復', building: '交映樓' }, 'EO': { campus: '新竹光復', building: '田家炳光電大樓' },
+            'EV': { campus: '新竹光復', building: '環工館' }, 'CS': { campus: '新竹光復', building: '資訊技術服務中心' },
+            'ES': { campus: '新竹光復', building: '電子資訊中心' }, 'CE': { campus: '新竹光復', building: '土木結構實驗室' },
+            'AD': { campus: '新竹光復', building: '大禮堂' }, 'Lib': { campus: '新竹光復', building: '浩然圖書中心' },
+            'TA': { campus: '台北北門', building: '會議室' }, 'TD': { campus: '台北北門', building: '一般教室' },
+            'TC': { campus: '台北北門', building: '演講廳' }, 'CM': { campus: '台南歸仁', building: '奇美樓' },
+            'HK': { campus: '新竹六家', building: '客家大樓' }, 'KB': { campus: '高雄校區', building: '高雄B棟' },
+            'KC': { campus: '高雄校區', building: '高雄C棟' }
+        };
+
+        const PALETTES = [
+            { border: 'border-l-4 border-l-blue-500', bg: 'bg-blue-50/95 hover:bg-blue-100/90', text: 'text-blue-950', badge: 'bg-blue-200 text-blue-900', picker: 'bg-blue-500' },
+            { border: 'border-l-4 border-l-indigo-500', bg: 'bg-indigo-50/95 hover:bg-indigo-100/90', text: 'text-indigo-950', badge: 'bg-indigo-200 text-indigo-900', picker: 'bg-indigo-500' },
+            { border: 'border-l-4 border-l-purple-500', bg: 'bg-purple-50/95 hover:bg-purple-100/90', text: 'text-purple-950', badge: 'bg-purple-200 text-purple-900', picker: 'bg-purple-500' },
+            { border: 'border-l-4 border-l-emerald-500', bg: 'bg-emerald-50/95 hover:bg-emerald-100/90', text: 'text-emerald-950', badge: 'bg-emerald-200 text-emerald-900', picker: 'bg-emerald-500' },
+            { border: 'border-l-4 border-l-amber-500', bg: 'bg-amber-50/95 hover:bg-amber-100/90', text: 'text-amber-950', badge: 'bg-amber-200 text-amber-900', picker: 'bg-amber-500' },
+            { border: 'border-l-4 border-l-teal-500', bg: 'bg-teal-50/95 hover:bg-teal-100/90', text: 'text-teal-950', badge: 'bg-teal-200 text-teal-900', picker: 'bg-teal-500' }
+        ];
+
+        // ==========================================
+        // 核心狀態變數
+        // ==========================================
+        let currentStudentId = "default";
+        let courses = [];
+        let dismissedWarnings = [];
+
+        window.onload = function() {
+            // 初始化先讀取無帳號狀態下的預設課表
+            loadData();
+            renderTimetable();
+            lucide.createIcons();
+        };
+
+        // ==========================================
+        // 帳號登入與同步邏輯
+        // ==========================================
+        function loginStudent() {
+            const idInput = document.getElementById('studentIdInput').value.trim();
+            if (!idInput) {
+                alert("請先輸入學號或課表代號！");
+                return;
+            }
+            
+            // 阻擋非法Firebase字元以免拋錯
+            if (isCloudMode && /[\.\#\$\[\]]/.test(idInput)) {
+                alert("代號請勿包含 . # $ [ ] 等符號");
+                return;
+            }
+
+            currentStudentId = idInput;
+            dismissedWarnings = [];
+
+            const statusNode = document.getElementById('syncStatus');
+            statusNode.innerHTML = `<span class="w-2 h-2 rounded-full bg-yellow-500 animate-ping"></span> 載入中...`;
+
+            if (isCloudMode) {
+                // 雲端連線模式：從 Firebase 即時讀取與接聽資料
+                db.ref('nycu_schedules/' + currentStudentId).on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    courses = data ? data : [];
+                    statusNode.className = "text-xs px-2 py-1 rounded bg-emerald-50 text-emerald-700 flex items-center gap-1 font-bold border border-emerald-200";
+                    statusNode.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-500"></span> 雲端連線中: ${currentStudentId}`;
+                    refreshUI();
+                });
+            } else {
+                // 本地預覽模式：使用學號獨立儲存空間
+                loadData();
+                statusNode.className = "text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 flex items-center gap-1 font-bold border border-blue-200";
+                statusNode.innerHTML = `<span class="w-2 h-2 rounded-full bg-blue-500"></span> 本地學號: ${currentStudentId}`;
+                refreshUI();
+            }
+        }
+
+        function saveData() {
+            if (isCloudMode) {
+                // 寫入雲端
+                db.ref('nycu_schedules/' + currentStudentId).set(courses);
+            } else {
+                // 寫入本地對應學號
+                localStorage.setItem('nycu_courses_' + currentStudentId, JSON.stringify(courses));
+            }
+        }
+
+        function loadData() {
+            const stored = localStorage.getItem('nycu_courses_' + currentStudentId);
+            if (stored) {
+                try { courses = JSON.parse(stored); } catch(e) { courses = []; }
+            } else {
+                courses = [];
+            }
+        }
+
+        function refreshUI() {
+            renderTimetable();
+            renderCourseList();
+            checkConflicts();
+        }
+
+        function saveAndRefresh() {
+            saveData();
+            if (!isCloudMode) { // 本地模式需要手動重整UI，雲端模式會由 .on('value') 自動監聽觸發
+                refreshUI();
+            }
+        }
+
+        // ==========================================
+        // 解析演算法 (沿用之前完美優化的智慧粘合與過濾版本)
+        // ==========================================
+        function parseLocation(locationStr) {
+            if (!locationStr) return { full: '未指定教室', short: '未指定', campus: '未知校區' };
+            let matchedCode = '';
+            let matchedData = null;
+            const sortedCodes = Object.keys(CLASSROOM_DATABASE).sort((a, b) => b.length - a.length);
+            for (let code of sortedCodes) {
+                if (locationStr.startsWith(code)) { matchedCode = code; matchedData = CLASSROOM_DATABASE[code]; break; }
+            }
+            if (matchedData) {
+                return { full: `${matchedData.campus}校區 ${matchedData.building} ${locationStr.substring(matchedCode.length)}`, short: `${matchedData.building} ${locationStr.substring(matchedCode.length)}`, campus: matchedData.campus };
+            }
+            return { full: locationStr, short: locationStr, campus: '未知校區' };
+        }
+
+        function parseLine(line) {
+            line = line.trim(); if (!line) return null;
+            const nycuPattern = /([MTWRFSU]+)([yz1-9nabcd]+)-([A-Za-z0-9]+)\[([A-Z]+)\]/;
+            const match = line.match(nycuPattern);
+            if (!match) return null;
+
+            const fullTimeToken = match[0], daysPart = match[1], periodsPart = match[2], location = match[3];
+            const tokenIndex = line.indexOf(fullTimeToken);
+            let beforeToken = line.substring(0, tokenIndex).trim();
+            let afterToken = line.substring(tokenIndex + fullTimeToken.length).trim();
+
+            beforeToken = beforeToken.replace(/^\d+[上下]/, '').replace(/^\d{5,6}/, '').replace(/^[A-Za-z0-9]{5,10}/, '').replace(/[\d\s]+$/, '').replace(/(不限|無限制)\s*\d*$/, '');
+            let name = beforeToken.trim() || "未命名課程";
+            afterToken = afterToken.replace(/^[\d\.\s]+/, '').replace(/(選修|必修|必選修)$/, '');
+            let teacher = afterToken.trim() || "未指定教師";
+            const locInfo = parseLocation(location);
+
+            return {
+                id: 'course_' + Date.now() + Math.random().toString(36).substr(2, 5),
+                name, teacher, rawTime: daysPart + periodsPart, location: locInfo.full, shortLocation: locInfo.short, campus: locInfo.campus,
+                days: daysPart.split(''), periods: periodsPart.split(''), colorIndex: Math.floor(Math.random() * PALETTES.length)
+            };
+        }
+
+        function processInput() {
+            const text = document.getElementById('rawInput').value;
+            const rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+            const combinedLines = [];
+            const nycuPattern = /([MTWRFSU]+)([yz1-9nabcd]+)-([A-Za-z0-9]+)\[([A-Z]+)\]/;
+
+            for (let i = 0; i < rawLines.length; i++) {
+                let current = rawLines[i];
+                if (!nycuPattern.test(current) && i + 1 < rawLines.length && nycuPattern.test(rawLines[i + 1])) {
+                    current = current + " " + rawLines[i + 1]; i++; 
+                }
+                combinedLines.push(current);
+            }
+
+            let addedCount = 0;
+            combinedLines.forEach(line => {
+                const course = parseLine(line);
+                if (course) { courses.push(course); addedCount++; }
+            });
+
+            if (addedCount > 0) {
+                document.getElementById('rawInput').value = '';
+                saveAndRefresh();
+            } else {
+                alert('解析失敗。請確認格式正確，並包含如 "R234-HB204[GF]" 的代碼。');
+            }
+        }
+
+        // ==========================================
+        // 介面渲染與彈窗功能
+        // ==========================================
+        function openCourseDetail(id) {
+            const course = courses.find(c => c.id === id); if (!course) return;
+            document.getElementById('modalCourseName').innerText = course.name;
+            document.getElementById('modalTeacher').innerText = course.teacher;
+            document.getElementById('modalTime').innerText = `${course.rawTime} 節次`;
+            document.getElementById('modalLocation').innerText = course.location;
+            document.getElementById('modalCampusBadge').innerText = course.campus + '校區';
+
+            const colorPickerContainer = document.getElementById('modalColorPicker');
+            colorPickerContainer.innerHTML = '';
+            PALETTES.forEach((palette, idx) => {
+                const btn = document.createElement('button');
+                btn.className = `w-7 h-7 rounded-full ${palette.picker} transition transform hover:scale-110 ${course.colorIndex === idx ? 'ring-2 ring-offset-2 ring-slate-700 scale-105' : 'opacity-60'}`;
+                btn.onclick = function() { course.colorIndex = idx; saveAndRefresh(); openCourseDetail(id); };
+                colorPickerContainer.appendChild(btn);
+            });
+
+            document.getElementById('modalDeleteBtn').onclick = function() { deleteCourse(id); closeModal(); };
+            document.getElementById('courseModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeModal() { document.getElementById('courseModal').classList.add('hidden'); }
+        function dismissWarning(warningId) { dismissedWarnings.push(warningId); checkConflicts(); }
+        function deleteCourse(id) { courses = courses.filter(c => c.id !== id); saveAndRefresh(); }
+        function clearAll() { if (confirm('確定要清空課表嗎？')) { courses = []; saveAndRefresh(); } }
+
+        function checkConflicts() {
+            const alertContainer = document.getElementById('alertContainer'); alertContainer.innerHTML = '';
+            let warnings = [], scheduleGrid = {}, dayCampuses = {};
+
+            courses.forEach(course => {
+                course.days.forEach(day => {
+                    if (!dayCampuses[day]) dayCampuses[day] = new Set();
+                    if (course.campus && course.campus !== '未知校區') dayCampuses[day].add(course.campus);
+                    course.periods.forEach(p => {
+                        const slotKey = `${day}-${p}`;
+                        if (!scheduleGrid[slotKey]) scheduleGrid[slotKey] = [];
+                        scheduleGrid[slotKey].push(course);
+                    });
+                });
+            });
+
+            Object.keys(scheduleGrid).forEach(slotKey => {
+                const list = scheduleGrid[slotKey];
+                if (list.length > 1) {
+                    const [day, p] = slotKey.split('-'), cNames = list.map(c => `「${c.name}」`).join(' 與 '), warningId = `conflict-${day}-${p}`;
+                    if (!dismissedWarnings.includes(warningId)) {
+                        warnings.push({ id: warningId, type: 'danger', msg: `【衝堂警告】${DAY_NAMES[day]}第 ${p} 節：${cNames} 發生時間重疊（已為您並排顯示）。` });
+                    }
+                }
+            });
+
+            Object.keys(dayCampuses).forEach(day => {
+                const campuses = dayCampuses[day];
+                if (campuses.size > 1) {
+                    const campusList = Array.from(campuses).join(' ⇄ '), warningId = `commute-${day}`;
+                    if (!dismissedWarnings.includes(warningId)) {
+                        warnings.push({ id: warningId, type: 'warning', msg: `【跨校區通勤提醒】${DAY_NAMES[day]} 您的課程分佈在不同校區：${campusList}。` });
+                    }
+                }
+            });
+
+            warnings.forEach(w => {
+                const bg = w.type === 'danger' ? 'bg-rose-50 border-rose-200 text-rose-800' : 'bg-amber-50 border-amber-200 text-amber-800';
+                const icon = w.type === 'danger' ? 'alert-triangle' : 'truck';
+                const div = document.createElement('div');
+                div.className = `flex items-center justify-between gap-3 p-3 border rounded-xl ${bg} text-sm font-medium shadow-sm transition modal-animate`;
+                div.innerHTML = `
+                    <div class="flex items-start gap-3"><i data-lucide="${icon}" class="w-5 h-5 flex-shrink-0 mt-0.5"></i><span>${w.msg}</span></div>
+                    <button onclick="dismissWarning('${w.id}')" class="text-slate-400 hover:text-slate-700 p-1 rounded-lg transition flex-shrink-0"><i data-lucide="x" class="w-4 h-4"></i></button>
+                `;
+                alertContainer.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+
+        function renderTimetable() {
+            const tbody = document.getElementById('timetableBody'); tbody.innerHTML = '';
+            Object.keys(TIME_CODES).forEach(key => {
+                const slot = TIME_CODES[key], tr = document.createElement('tr');
+                let tdTime = document.createElement('td');
+                tdTime.className = "p-2 border border-slate-200 text-center bg-slate-50/80 sticky left-0 z-10 select-none";
+                tdTime.innerHTML = `<div class="font-bold text-slate-700 text-sm">${slot.label}</div><div class="text-[10px] text-slate-400 mt-0.5 font-mono">${slot.time}</div>`;
+                tr.appendChild(tdTime);
+
+                DAYS.forEach(day => {
+                    let tdDay = document.createElement('td');
+                    tdDay.className = "p-1 border border-slate-200 vertical-align-top h-24 min-h-24 bg-white relative";
+                    const slotCourses = courses.filter(c => c.days.includes(day) && c.periods.includes(key));
+
+                    if (slotCourses.length > 0) {
+                        const wrapper = document.createElement('div');
+                        wrapper.className = "flex flex-row gap-1 h-full w-full overflow-hidden";
+                        slotCourses.forEach(c => {
+                            const p = PALETTES[c.colorIndex], card = document.createElement('div');
+                            card.className = `p-1.5 rounded-xl border-l-4 text-left h-full flex flex-col justify-between transition hover:scale-[1.02] cursor-pointer flex-1 min-w-0 shadow-sm ${p.border} ${p.bg} ${p.text}`;
+                            card.setAttribute('onclick', `openCourseDetail('${c.id}')`);
+                            card.innerHTML = `
+                                <div class="space-y-0.5">
+                                    <div class="font-bold text-[11px] md:text-xs leading-tight break-all line-clamp-3">${c.name}</div>
+                                    <div class="text-[10px] opacity-75 truncate">${c.teacher}</div>
+                                </div>
+                                <div class="text-[9px] mt-1 px-1 py-0.5 rounded inline-block w-fit font-medium truncate max-w-full ${p.badge}">${c.shortLocation}</div>
+                            `;
+                            wrapper.appendChild(card);
+                        });
+                        tdDay.appendChild(wrapper);
+                    }
+                    tr.appendChild(tdDay);
+                });
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderCourseList() {
+            const listContainer = document.getElementById('courseList'), countBadge = document.getElementById('courseCount');
+            listContainer.innerHTML = ''; countBadge.innerText = courses.length;
+            if (courses.length === 0) {
+                listContainer.innerHTML = '<p class="text-slate-400 text-center py-4">目前尚未加入任何課程</p>'; return;
+            }
+            courses.forEach(c => {
+                const div = document.createElement('div');
+                div.className = `flex items-center justify-between p-2 border rounded-xl bg-slate-50 border-slate-200 hover:bg-slate-100/70 transition`;
+                div.innerHTML = `
+                    <div class="flex-1 min-w-0 pr-2 cursor-pointer" onclick="openCourseDetail('${c.id}')">
+                        <div class="font-bold text-slate-800 text-xs truncate">${c.name}</div>
+                        <div class="text-[11px] text-slate-500 mt-0.5 space-x-2 flex items-center"><span class="text-blue-600 font-bold font-mono">${c.rawTime}</span><span>|</span><span class="truncate">${c.teacher}</span></div>
+                    </div>
+                    <button onclick="deleteCourse('${c.id}')" class="text-slate-400 hover:text-rose-500 p-1 transition"><i data-lucide="x" class="w-4 h-4"></i></button>
+                `;
+                listContainer.appendChild(div);
+            });
+            lucide.createIcons();
+        }
+    </script>
+</body>
+</html>
