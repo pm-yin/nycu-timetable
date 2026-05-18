@@ -99,8 +99,7 @@
                                 <th class="p-2 text-center text-sm font-bold text-slate-700 rounded-tr-xl border border-slate-200">週日 (U)</th>
                             </tr>
                         </thead>
-                        <tbody id="timetableBody" class="divide-y divide-slate-200">
-                            </tbody>
+                        <tbody id="timetableBody" class="divide-y divide-slate-200"></tbody>
                     </table>
                 </div>
             </div>
@@ -156,34 +155,24 @@
 
     <script>
         // ==========================================
-        // 🛠️ 雲端連線設定區 (部署時在這邊填入您的 Firebase 憑證)
+        // 🛠️ 雲端連線設定區
         // ==========================================
-        // Import the functions you need from the SDKs you need
-        import { initializeApp } from "firebase/app";
-        import { getAnalytics } from "firebase/analytics";
-        // TODO: Add SDKs for Firebase products that you want to use
-        // https://firebase.google.com/docs/web/setup#available-libraries
-
-        // Your web app's Firebase configuration
-        // For Firebase JS SDK v7.20.0 and later, measurementId is optional
         const firebaseConfig = {
-        apiKey: "AIzaSyAUIAWWyoG1eOXbBYAXEVxRc7ihbL11uI8",
-        authDomain: "nycu-timetable.firebaseapp.com",
-        projectId: "nycu-timetable",
-        storageBucket: "nycu-timetable.firebasestorage.app",
-        messagingSenderId: "683179006718",
-        appId: "1:683179006718:web:a58764d134ebdea21ca3af",
-        measurementId: "G-C55KZ11H9Y"
+            apiKey: "AIzaSyAUIAWWyoG1eOXbBYAXEVxRc7ihbL11uI8",
+            authDomain: "nycu-timetable.firebaseapp.com",
+            projectId: "nycu-timetable",
+            storageBucket: "nycu-timetable.firebasestorage.app",
+            messagingSenderId: "683179006718",
+            appId: "1:683179006718:web:a58764d134ebdea21ca3af",
+            measurementId: "G-C55KZ11H9Y",
+            // 👇 【重要修正】請把你的 Realtime Database 網址貼在下面雙引號內
+            databaseURL: "https://nycu-timetable-default-rtdb.asia-southeast1.firebasedatabase.app/" 
         };
-
-        // Initialize Firebase
-        const app = initializeApp(firebaseConfig);
-        const analytics = getAnalytics(app);
 
         let isCloudMode = false;
         let db = null;
 
-        // 初始化 Firebase (若填寫了設定檔則自動切換為真雲端連線)
+        // 初始化 Firebase (完全改用瀏覽器相容全域語法)
         if (firebaseConfig.databaseURL) {
             try {
                 firebase.initializeApp(firebaseConfig);
@@ -222,7 +211,7 @@
             'YH': { campus: '台北陽明', building: '致和樓' }, 'YC': { campus: '台北陽明', building: '生物醫學大樓' },
             'AS': { campus: '台北陽明', building: '中央研究院' }, 'PH': { campus: '台北陽明', building: '臺北榮民總醫院' },
             'CH': { campus: '台中', building: '台中榮民總醫院' }, 'KH': { campus: '高雄', building: '高雄榮民總醫院' },
-            'C': { campus: '新竹博愛', building: '竹銘館' }, 'E': { campus: '新竹博愛', building: '教學大樓' },
+            'C': { campus: '新竹博愛', building: '竹銘館' }, 'E': { campus: '新竹博微', building: '教學大樓' },
             'LI': { campus: '新竹博愛', building: '實驗一館' }, 'BA': { campus: '新竹博愛', building: '生科實驗館' },
             'BB': { campus: '新竹博愛', building: '生科實驗二館' }, 'BI': { campus: '新竹博愛', building: '賢齊館' },
             'EA': { campus: '新竹光復', building: '工程一館' }, 'EB': { campus: '新竹光復', building: '工程二館' },
@@ -253,31 +242,22 @@
             { border: 'border-l-4 border-l-teal-500', bg: 'bg-teal-50/95 hover:bg-teal-100/90', text: 'text-teal-950', badge: 'bg-teal-200 text-teal-900', picker: 'bg-teal-500' }
         ];
 
-        // ==========================================
-        // 核心狀態變數
-        // ==========================================
         let currentStudentId = "default";
         let courses = [];
         let dismissedWarnings = [];
 
         window.onload = function() {
-            // 初始化先讀取無帳號狀態下的預設課表
             loadData();
             renderTimetable();
             lucide.createIcons();
         };
 
-        // ==========================================
-        // 帳號登入與同步邏輯
-        // ==========================================
         function loginStudent() {
             const idInput = document.getElementById('studentIdInput').value.trim();
             if (!idInput) {
                 alert("請先輸入學號或課表代號！");
                 return;
             }
-            
-            // 阻擋非法Firebase字元以免拋錯
             if (isCloudMode && /[\.\#\$\[\]]/.test(idInput)) {
                 alert("代號請勿包含 . # $ [ ] 等符號");
                 return;
@@ -285,12 +265,10 @@
 
             currentStudentId = idInput;
             dismissedWarnings = [];
-
             const statusNode = document.getElementById('syncStatus');
             statusNode.innerHTML = `<span class="w-2 h-2 rounded-full bg-yellow-500 animate-ping"></span> 載入中...`;
 
             if (isCloudMode) {
-                // 雲端連線模式：從 Firebase 即時讀取與接聽資料
                 db.ref('nycu_schedules/' + currentStudentId).on('value', (snapshot) => {
                     const data = snapshot.val();
                     courses = data ? data : [];
@@ -299,7 +277,6 @@
                     refreshUI();
                 });
             } else {
-                // 本地預覽模式：使用學號獨立儲存空間
                 loadData();
                 statusNode.className = "text-xs px-2 py-1 rounded bg-blue-50 text-blue-700 flex items-center gap-1 font-bold border border-blue-200";
                 statusNode.innerHTML = `<span class="w-2 h-2 rounded-full bg-blue-500"></span> 本地學號: ${currentStudentId}`;
@@ -309,10 +286,8 @@
 
         function saveData() {
             if (isCloudMode) {
-                // 寫入雲端
                 db.ref('nycu_schedules/' + currentStudentId).set(courses);
             } else {
-                // 寫入本地對應學號
                 localStorage.setItem('nycu_courses_' + currentStudentId, JSON.stringify(courses));
             }
         }
@@ -334,14 +309,11 @@
 
         function saveAndRefresh() {
             saveData();
-            if (!isCloudMode) { // 本地模式需要手動重整UI，雲端模式會由 .on('value') 自動監聽觸發
+            if (!isCloudMode) {
                 refreshUI();
             }
         }
 
-        // ==========================================
-        // 解析演算法 (沿用之前完美優化的智慧粘合與過濾版本)
-        // ==========================================
         function parseLocation(locationStr) {
             if (!locationStr) return { full: '未指定教室', short: '未指定', campus: '未知校區' };
             let matchedCode = '';
@@ -367,7 +339,7 @@
             let beforeToken = line.substring(0, tokenIndex).trim();
             let afterToken = line.substring(tokenIndex + fullTimeToken.length).trim();
 
-            beforeToken = beforeToken.replace(/^\d+[上下]/, '').replace(/^\d{5,6}/, '').replace(/^[A-Za-z0-9]{5,10}/, '').replace(/[\d\s]+$/, '').replace(/(不限|無限制)\s*\d*$/, '');
+            beforeToken = beforeToken.replace(/^\d+[上下]/, '').replace(/^\d{5,6}/, '').replace(/^[A-Za-z0-9{5,10}/, '').replace(/[\d\s]+$/, '').replace(/(不限|無限制)\s*\d*$/, '');
             let name = beforeToken.trim() || "未命名課程";
             afterToken = afterToken.replace(/^[\d\.\s]+/, '').replace(/(選修|必修|必選修)$/, '');
             let teacher = afterToken.trim() || "未指定教師";
@@ -408,9 +380,6 @@
             }
         }
 
-        // ==========================================
-        // 介面渲染與彈窗功能
-        // ==========================================
         function openCourseDetail(id) {
             const course = courses.find(c => c.id === id); if (!course) return;
             document.getElementById('modalCourseName').innerText = course.name;
